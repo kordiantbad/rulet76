@@ -11,7 +11,8 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 
-let renderer, scene, camera, composer, clock, canvasEl;
+let renderer, scene, camera, clock, canvasEl;
+let bloomComposer, finalComposer, bloomPass;
 let revolver, cylinderGroup, hammer, muzzleFlash, muzzleLight, gunRig, tablePointer;
 let dust, beamCone, bulbLight, targetReticle, shooterRing;
 let running = false, inited = false;
@@ -131,75 +132,90 @@ function drawStick(ctx, W, H, opts) {
   const pose = opts.pose | 0, color = opts.color, dead = !!opts.dead;
   const aimDeg = (typeof opts.aimDeg === "number") ? opts.aimDeg : null;
   const headTurn = Math.max(-1, Math.min(1, opts.headTurn || 0));
-  const holdGun = !!opts.holdGun;
+  const holdGun = !!opts.holdGun, selfAim = !!opts.selfAim;
   ctx.clearRect(0, 0, W, H);
   ctx.lineCap = "round"; ctx.lineJoin = "round";
   const cx = W / 2;
-  const stroke = dead ? "#8a8f96" : "#f1ece2";
-  ctx.strokeStyle = stroke; ctx.fillStyle = "rgba(0,0,0,0)";
-  ctx.lineWidth = 9;
-  const L = (x1, y1, x2, y2) => { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); };
+  const WHITE = dead ? "#cfd4da" : "#ffffff";
+  const OUT = "#0a0a0a";
+  const LW = 8, OW = LW + 8;
+  // white limb with a black outline (draw black casing, then white core)
+  const L = (x1, y1, x2, y2) => {
+    ctx.strokeStyle = OUT; ctx.lineWidth = OW; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.strokeStyle = WHITE; ctx.lineWidth = LW; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  };
+  const head = (x, y, r) => {
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = WHITE; ctx.fill();
+    ctx.lineWidth = 6; ctx.strokeStyle = OUT; ctx.stroke();
+  };
+  const gun = (gx, gy, ax, ay) => {
+    ctx.strokeStyle = OUT; ctx.lineCap = "round";
+    ctx.lineWidth = 11; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx + ax * 22, gy + ay * 22); ctx.stroke();       // barrel
+    ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx - ay * 13, gy + ax * 13); ctx.stroke();        // grip
+  };
 
   if (dead) {
     // slumped on the ground, X eyes
     const gy = H - 60;
-    ctx.save();
-    L(cx - 90, gy, cx + 70, gy - 8);                    // torso lying
-    ctx.beginPath(); ctx.arc(cx + 92, gy - 14, 26, 0, Math.PI * 2); ctx.stroke(); // head
-    L(cx - 90, gy, cx - 120, gy + 30); L(cx - 90, gy, cx - 110, gy - 26); // legs sprawled
-    L(cx - 10, gy - 4, cx - 30, gy + 34); L(cx - 10, gy - 4, cx + 6, gy + 36); // arms
-    ctx.lineWidth = 5; ctx.strokeStyle = "#e5484d";
-    const ex = cx + 92, ey = gy - 16;
-    L(ex - 12, ey - 8, ex - 2, ey + 2); L(ex - 2, ey - 8, ex - 12, ey + 2);
-    L(ex + 4, ey - 8, ex + 14, ey + 2); L(ex + 14, ey - 8, ex + 4, ey + 2);
-    ctx.restore();
+    L(cx - 90, gy, cx + 60, gy - 6);                    // torso lying
+    head(cx + 90, gy - 14, 26);
+    L(cx - 90, gy, cx - 120, gy + 30); L(cx - 90, gy, cx - 108, gy - 26); // legs sprawled
+    L(cx - 12, gy - 4, cx - 30, gy + 34); L(cx - 12, gy - 4, cx + 6, gy + 36); // arms
+    ctx.lineWidth = 5; ctx.strokeStyle = "#e5484d"; ctx.lineCap = "round";
+    const ex = cx + 90, ey = gy - 16;
+    const XL = (a, b, c, d) => { ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke(); };
+    XL(ex - 12, ey - 8, ex - 2, ey + 2); XL(ex - 2, ey - 8, ex - 12, ey + 2);
+    XL(ex + 4, ey - 8, ex + 14, ey + 2); XL(ex + 14, ey - 8, ex + 4, ey + 2);
     return;
   }
 
   const headR = 26, headY = 74;
-  const hx = cx + headTurn * 9;   // head shifts slightly toward gaze
-  ctx.beginPath(); ctx.arc(hx, headY, headR, 0, Math.PI * 2); ctx.stroke();
-  // colored hat band accent
-  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 8;
-  ctx.beginPath(); ctx.arc(hx, headY, headR, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke(); ctx.restore();
-  // eyes look toward gaze direction
-  ctx.save(); ctx.fillStyle = stroke;
-  const eo = headTurn * 6;
-  ctx.beginPath(); ctx.arc(hx - 8 + eo, headY - 3, 3, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(hx + 8 + eo, headY - 3, 3, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-  // smile
-  ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(hx, headY + 6, 11, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
-  ctx.lineWidth = 9;
   const neck = headY + headR, hip = H - 150;
-  L(cx, neck, cx, hip); // spine
   const sh = neck + 14;
+  const hx = cx + headTurn * 9;   // head shifts slightly toward gaze
 
-  if (aimDeg !== null) {
-    // aiming: outstretched arm toward the target, planted stance
+  // spine + legs first (so head/arms overlap cleanly)
+  L(cx, neck, cx, hip);
+
+  if (selfAim) {
+    // barrel to own temple — the "shoot yourself" pose
+    const tx = hx + 30, ty = headY + 2;
+    L(cx, sh, tx, ty);                                   // arm up to head
+    L(cx, sh, cx - 30, sh + 44);                         // other arm down
+    L(cx, hip, cx - 30, H - 50); L(cx, hip, cx + 34, H - 52);
+    head(hx, headY, headR);
+    gun(tx, ty, -1, 0);                                  // gun pointing at head
+  } else if (aimDeg !== null) {
     const ax = Math.cos(aimDeg), ay = Math.sin(aimDeg);
     const armLen = 82;
     const gx = cx + ax * armLen, gy = sh + ay * armLen;
     L(cx, sh, gx, gy);                                   // gun arm
-    L(cx, sh, cx - ax * 30, sh + Math.abs(ay) * 6 + 42); // support arm at side
-    L(cx, hip, cx - 32, H - 50); L(cx, hip, cx + 34, H - 52); // legs
-    if (holdGun) {
-      ctx.save(); ctx.strokeStyle = "#1b1d22"; ctx.lineWidth = 9;
-      const bx = gx + ax * 20, by = gy + ay * 20;
-      ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(bx, by); ctx.stroke();   // barrel
-      ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx - ay * 12, gy + ax * 12); ctx.stroke(); // grip
-      ctx.restore();
-    }
-    return;
+    L(cx, sh, cx - ax * 30, sh + Math.abs(ay) * 6 + 42); // support arm
+    L(cx, hip, cx - 32, H - 50); L(cx, hip, cx + 34, H - 52);
+    head(hx, headY, headR);
+    if (holdGun) gun(gx, gy, ax, ay);
+  } else {
+    const P = pose % 6;
+    if (P === 0) { L(cx, sh, cx - 60, sh + 34); L(cx, sh, cx + 60, sh + 34); L(cx, hip, cx - 40, H - 50); L(cx, hip, cx + 40, H - 50); }
+    else if (P === 1) { L(cx, sh, cx - 58, sh - 46); L(cx, sh, cx + 58, sh - 46); L(cx, hip, cx - 30, H - 50); L(cx, hip, cx + 46, H - 60); }
+    else if (P === 2) { L(cx, sh, cx - 50, sh + 8); L(cx - 50, sh + 8, cx - 40, sh + 50); L(cx, sh, cx + 60, sh + 30); L(cx, hip, cx - 48, H - 52); L(cx, hip, cx + 34, H - 46); }
+    else if (P === 3) { L(cx, sh, cx - 66, sh - 20); L(cx, sh, cx + 40, sh + 50); L(cx, hip, cx - 52, H - 60); L(cx, hip, cx + 30, H - 44); }
+    else if (P === 4) { L(cx, sh, cx - 44, sh + 40); L(cx - 44, sh + 40, cx - 6, sh + 30); L(cx, sh, cx + 44, sh + 40); L(cx + 44, sh + 40, cx + 6, sh + 30); L(cx, hip, cx - 36, H - 50); L(cx, hip, cx + 36, H - 50); }
+    else { L(cx, sh, cx - 62, sh + 10); L(cx, sh, cx + 62, sh + 10); L(cx, hip, cx - 20, H - 60); L(cx - 20, H - 60, cx - 30, H - 46); L(cx, hip, cx + 46, H - 54); }
+    head(hx, headY, headR);
   }
 
-  // idle pose variants for arms/legs
-  const P = pose % 6;
-  if (P === 0) { L(cx, sh, cx - 60, sh + 34); L(cx, sh, cx + 60, sh + 34); L(cx, hip, cx - 40, H - 50); L(cx, hip, cx + 40, H - 50); }
-  else if (P === 1) { L(cx, sh, cx - 58, sh - 46); L(cx, sh, cx + 58, sh - 46); L(cx, hip, cx - 30, H - 50); L(cx, hip, cx + 46, H - 60); } // arms up
-  else if (P === 2) { L(cx, sh, cx - 50, sh + 8); L(cx - 50, sh + 8, cx - 40, sh + 50); L(cx, sh, cx + 60, sh + 30); L(cx, hip, cx - 48, H - 52); L(cx, hip, cx + 34, H - 46); } // hand on hip
-  else if (P === 3) { L(cx, sh, cx - 66, sh - 20); L(cx, sh, cx + 40, sh + 50); L(cx, hip, cx - 52, H - 60); L(cx, hip, cx + 30, H - 44); } // waving
-  else if (P === 4) { L(cx, sh, cx - 44, sh + 40); L(cx - 44, sh + 40, cx - 6, sh + 30); L(cx, sh, cx + 44, sh + 40); L(cx + 44, sh + 40, cx + 6, sh + 30); L(cx, hip, cx - 36, H - 50); L(cx, hip, cx + 36, H - 50); } // arms crossed
-  else { L(cx, sh, cx - 62, sh + 10); L(cx, sh, cx + 62, sh + 10); L(cx, hip, cx - 20, H - 60); L(cx - 20, H - 60, cx - 30, H - 46); L(cx, hip, cx + 46, H - 54); } // leaning
+  // face + colored identity band (drawn on top of the white head)
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = 7; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(hx, headY, headR - 1, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
+  ctx.fillStyle = OUT;
+  const eo = headTurn * 6;
+  ctx.beginPath(); ctx.arc(hx - 8 + eo, headY - 2, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(hx + 8 + eo, headY - 2, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = OUT; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(hx, headY + 7, 10, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  ctx.restore();
 }
 
 function makeFigure(pose, color, name) {
@@ -393,11 +409,34 @@ function init(canvas) {
   shooterRing = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.03, 12, 32), new THREE.MeshStandardMaterial({ color: 0xffb347, emissive: 0xffa030, emissiveIntensity: 2 }));
   shooterRing.rotation.x = Math.PI / 2; shooterRing.visible = false; scene.add(shooterRing);
 
-  composer = new EffectComposer(renderer);
-  composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.65, 0.8, 0.85));
-  composer.addPass(new ShaderPass(VignetteShader));
-  composer.addPass(new OutputPass());
+  // Selective bloom: only objects tagged userData.bloom glow (lights, neon,
+  // muzzle flash, tracers). The white stick figures never bloom.
+  scene.traverse((o) => {
+    if (o.isMesh && o.material && o.material.emissive) {
+      const e = o.material.emissive, inten = o.material.emissiveIntensity || 0;
+      if (inten > 0.4 && (e.r + e.g + e.b) > 0.05) o.userData.bloom = true;
+    }
+    if (o.isMesh && o.material && o.material.blending === THREE.AdditiveBlending) o.userData.bloom = true;
+  });
+  if (muzzleFlash) muzzleFlash.userData.bloom = true;
+
+  const rp = new RenderPass(scene, camera);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.9, 0.5, 0.0);
+  bloomComposer = new EffectComposer(renderer); bloomComposer.renderToScreen = false;
+  bloomComposer.addPass(rp); bloomComposer.addPass(bloomPass);
+
+  const mixPass = new ShaderPass(new THREE.ShaderMaterial({
+    uniforms: { baseTexture: { value: null }, bloomTexture: { value: bloomComposer.renderTarget2.texture } },
+    vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
+    fragmentShader: "uniform sampler2D baseTexture; uniform sampler2D bloomTexture; varying vec2 vUv; void main(){ gl_FragColor = texture2D(baseTexture,vUv) + texture2D(bloomTexture,vUv); }",
+  }), "baseTexture");
+  mixPass.needsSwap = true;
+
+  finalComposer = new EffectComposer(renderer);
+  finalComposer.addPass(new RenderPass(scene, camera));
+  finalComposer.addPass(mixPass);
+  finalComposer.addPass(new ShaderPass(VignetteShader));
+  finalComposer.addPass(new OutputPass());
 
   clock = new THREE.Clock();
   window.addEventListener("resize", onResize);
@@ -428,7 +467,10 @@ function makeReticleTexture() {
 function onResize() {
   if (!renderer) return; const el = renderer.domElement;
   const w = el.clientWidth || window.innerWidth, h = el.clientHeight || window.innerHeight;
-  renderer.setSize(w, h, false); composer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  if (bloomComposer) bloomComposer.setSize(w, h);
+  if (finalComposer) finalComposer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 function onPointerMove(e) {
   if (pointerLocked) return; // when locked, movement comes through onLockedMove
@@ -436,7 +478,7 @@ function onPointerMove(e) {
   if (cross) { cross.style.left = e.clientX + "px"; cross.style.top = e.clientY + "px"; }
 }
 function onPointerDown() {
-  if (!running) return;
+  if (!running || camMode !== "fp" || !localAlive) return;
   if (document.pointerLockElement !== canvasEl) { try { canvasEl.requestPointerLock(); } catch (_) {} return; }
   // locked: a click fires at whoever you're looking at (only on your turn)
   if (myTurn && currentTarget && window.socket) window.socket.emit("roulette_shoot", { target: currentTarget });
@@ -491,8 +533,21 @@ function setState(st, localS) {
     if (rec.labelActive !== active) { rec.labelActive = active; drawLabel(rec.label.userData.canvas, rec.label.userData.name, active); rec.label.userData.tex.needsUpdate = true; }
   });
 
-  myTurn = st.state === "playing" && st.turn === localSid;
-  gunRig.visible = myTurn && !gunBusy;
+  // track whether the local player is still alive → spectator overview on death
+  const me = st.order.find((o) => o.sid === localSid);
+  const wasAlive = localAlive;
+  localAlive = !me || !!me.alive;         // if not in the round yet, treat as alive
+  if (st.state !== "playing") { localAlive = !me || !!me.alive; }
+  if (wasAlive && !localAlive) {
+    // died — the cinematic (if any) will drop us into spectator; otherwise now
+    if (camMode !== "cinematic") camMode = "spectator";
+    document.body.classList.remove("rl-aiming");
+  } else if (localAlive && camMode === "spectator" && st.state !== "playing") {
+    camMode = "fp";  // new round started, back to first person
+  }
+
+  myTurn = st.state === "playing" && st.turn === localSid && localAlive;
+  gunRig.visible = myTurn && !gunBusy && camMode === "fp";
 
   // shooter ring for observed turns
   if (st.state === "playing" && st.turn && st.turn !== localSid && players.get(st.turn)) {
@@ -572,19 +627,20 @@ function projNDC(v) { const p = v.clone().project(camera); return { x: p.x, y: p
 function updateFigures() {
   for (const [sid, rec] of players) {
     if (!rec.alive) continue;
+    const selfAim = !!rec.selfShot;
     let aimDeg = null, headTurn = Math.max(-1, Math.min(1, rec.lookYaw / YAW_LIMIT));
-    const tgt = rec.aimTarget && players.get(rec.aimTarget);
+    const tgt = !selfAim && rec.aimTarget && players.get(rec.aimTarget);
     if (tgt && tgt.alive) {
       const a = projNDC(rec.headPos), b = projNDC(tgt.headPos);
       aimDeg = Math.atan2(-(b.y - a.y), (b.x - a.x) * camera.aspect);
       headTurn = Math.max(-1, Math.min(1, Math.cos(aimDeg)));
     }
-    const holdGun = !!(curState && curState.state === "playing" && curState.turn === sid);
-    const key = (aimDeg === null ? "n" : aimDeg.toFixed(1)) + "|" + headTurn.toFixed(1) + "|" + (holdGun ? 1 : 0);
+    const holdGun = selfAim || !!(curState && curState.state === "playing" && curState.turn === sid);
+    const key = (selfAim ? "self" : aimDeg === null ? "n" : aimDeg.toFixed(1)) + "|" + headTurn.toFixed(1) + "|" + (holdGun ? 1 : 0);
     if (key !== rec.drawKey) {
       rec.drawKey = key;
       drawStick(rec.canvas.getContext("2d"), rec.canvas.width, rec.canvas.height,
-        { pose: rec.pose, color: rec.color, dead: false, aimDeg, headTurn, holdGun });
+        { pose: rec.pose, color: rec.color, dead: false, aimDeg, headTurn, holdGun, selfAim });
       rec.tex.needsUpdate = true;
     }
   }
@@ -594,6 +650,92 @@ function updateFigures() {
 //  FX
 // =========================================================================
 let gunBusy = false, firing = false;
+let camMode = "fp";      // fp | cinematic | spectator
+let cine = null, bullet = null, localAlive = true;
+
+// world floor position of a seat (local player == the camera seat)
+function worldSeat(sid) {
+  if (sid === localSid) return new THREE.Vector3(CAM_POS.x, 0, CAM_POS.z);
+  const r = players.get(sid); return r ? r.pos.clone() : new THREE.Vector3(0, 0, 0);
+}
+function spawnBullet(from, to) {
+  if (bullet) { scene.remove(bullet); bullet = null; }
+  const b = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 10),
+    new THREE.MeshStandardMaterial({ color: 0xfff0c0, emissive: 0xffb020, emissiveIntensity: 4 }));
+  b.userData.bloom = true; b.position.copy(from);
+  b.userData.from = from.clone(); b.userData.to = to.clone();
+  // a stretched glow trail behind the round
+  const trail = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeFlashTexture(), color: 0xffcc66, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
+  trail.userData.bloom = true; trail.scale.set(0.5, 0.12, 1); b.add(trail);
+  scene.add(b); bullet = b;
+}
+function spawnBlood(pos) {
+  if (!SMOKE_TEX) SMOKE_TEX = makeSmokeTexture();
+  for (let i = 0; i < 10; i++) {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: SMOKE_TEX, color: 0xc21414, transparent: true, opacity: 0.9, depthWrite: false }));
+    m.position.copy(pos); m.scale.set(0.06, 0.06, 0.06); scene.add(m);
+    smokeParticles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 0.9, 0.3 + Math.random() * 0.5, (Math.random() - 0.5) * 0.9), life: 0.9, max: 0.9, grav: -1.6 });
+  }
+}
+function startCinematic(shooterSid, victimSid, self) {
+  const sPos = worldSeat(shooterSid), vPos = worldSeat(victimSid);
+  const vHead = vPos.clone().setY(1.6);
+  const sHand = self ? vHead.clone() : sPos.clone().lerp(vHead, 0.22).setY(1.5);
+  let camPos, look, bulletTo;
+  if (self) {
+    const outward = vPos.clone().setY(0);
+    if (outward.lengthSq() < 1e-4) outward.set(0, 0, 1); else outward.normalize();
+    const side = new THREE.Vector3().crossVectors(outward, UP).normalize();
+    camPos = vHead.clone().add(side.multiplyScalar(1.5)).add(outward.clone().multiplyScalar(0.7)).add(new THREE.Vector3(0, 0.25, 0));
+    look = vHead.clone();
+    bulletTo = vHead.clone().add(outward.clone().multiplyScalar(-0.1)).add(new THREE.Vector3(0, 0.9, 0)); // out the top of the head
+  } else {
+    const dir = vHead.clone().sub(sHand).setY(0);
+    if (dir.lengthSq() < 1e-4) dir.set(0, 0, -1); else dir.normalize();
+    const side = new THREE.Vector3().crossVectors(dir, UP).normalize();
+    const mid = sHand.clone().lerp(vHead, 0.5);
+    camPos = mid.clone().add(side.multiplyScalar(2.1)).add(new THREE.Vector3(0, 0.5, 0));
+    look = mid;
+    bulletTo = vHead.clone();
+  }
+  cine = { t: 0, dur: 2.6, hitAt: 0.62, camPos, look, camFrom: camera.position.clone(), lookFrom: camLookTarget.clone(), self, victimSid, victimHead: vHead, impacted: false };
+  spawnBullet(sHand, bulletTo);
+  camMode = "cinematic";
+  if (document.pointerLockElement) { try { document.exitPointerLock(); } catch (_) {} }
+}
+function updateCinematic(dt) {
+  const c = cine; if (!c) { camMode = localAlive ? "fp" : "spectator"; return; }
+  c.t += dt; const p = Math.min(c.t / c.dur, 1);
+  const ce = easeOut(Math.min(p * 1.25, 1));
+  camera.position.lerpVectors(c.camFrom, c.camPos, ce);
+  camLookTarget.lerpVectors(c.lookFrom, c.look, ce);
+  camera.lookAt(camLookTarget);
+  if (bullet) {
+    const bp = Math.min(p / c.hitAt, 1);
+    bullet.position.lerpVectors(bullet.userData.from, bullet.userData.to, easeIn(bp));
+    if (bp >= 1 && !c.impacted) {
+      c.impacted = true; observerFlash(c.victimHead); spawnBlood(c.victimHead); shake = 0.7;
+      scene.remove(bullet); bullet = null;
+    }
+  }
+  if (p >= 1) endCinematic();
+}
+function endCinematic() {
+  cine = null;
+  camMode = localAlive ? "fp" : "spectator";
+}
+function updateSpectator(dt) {
+  const a = idleT * 0.12, R = 5.4;
+  camera.position.set(Math.sin(a) * R, 4.3, Math.cos(a) * R + 0.4);
+  camLookTarget.set(0, 0.9, 0);
+  camera.lookAt(camLookTarget);
+}
+function markSelfShot(sid) {
+  const r = players.get(sid); if (!r) return;
+  r.selfShot = true; r.drawKey = "";
+  setTimeout(() => { const rr2 = players.get(sid); if (rr2) { rr2.selfShot = false; rr2.drawKey = ""; } }, 1900);
+}
+
 function onFx(fx) {
   if (!running || !inited) return;
   if (fx.type === "handoff") startHandoff(fx.from, fx.to);
@@ -614,27 +756,27 @@ function cockAndDrop(onFall) {
 
 function fireSequence(isBang, shooterSid, targetSid, selfShot) {
   const mine = shooterSid === localSid;
+  const victim = selfShot ? shooterSid : (targetSid || shooterSid);
+
+  // observers: pose the shooter's figure (self = gun to own head)
+  if (!mine && selfShot) markSelfShot(shooterSid);
+
+  if (isBang) {
+    // LIVE round — cinematic kill-cam for everyone, then the round animates it
+    if (mine) { firing = true; setTimeout(() => { firing = false; }, 900); }
+    startCinematic(shooterSid, victim, selfShot);
+    return;
+  }
+
+  // empty chamber (click) — quick local feedback, no cinematic
   if (mine) {
     firing = true;
     gunRig.visible = true;
-    if (selfShot) { // raise the barrel up to the chin
+    if (selfShot) {
       gunRig.quaternion.copy(quatFromBarrel(new THREE.Vector3(-0.15, 1, 0.2)));
       tween(gunRig, { "position.y": -0.02, "position.z": -0.45 }, 0.22, easeOut);
     }
-    cockAndDrop(() => {
-      if (isBang) muzzleBang(); else cylTick();
-      setTimeout(() => { firing = false; }, 450);
-    });
-  } else {
-    // observer: flash at shooter, shake if bang
-    const rec = players.get(shooterSid);
-    if (rec) {
-      if (isBang) { observerFlash(rec.headPos); shake = 0.8; }
-    }
-    if (isBang && targetSid) {
-      const t = players.get(targetSid);
-      if (t) observerFlash(t.center);
-    }
+    cockAndDrop(() => { cylTick(); setTimeout(() => { firing = false; }, 350); });
   }
 }
 function muzzleBang() {
@@ -649,6 +791,7 @@ function cylTick() { tween(cylinderGroup, { "rotation.x": cylinderGroup.rotation
 function worldMuzzle() { return revolver.localToWorld(new THREE.Vector3(0.4, 0.045, 0)); }
 function observerFlash(pos) {
   const f = new THREE.Sprite(new THREE.SpriteMaterial({ map: muzzleFlash.material.map, color: 0xffcc66, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+  f.userData.bloom = true;
   f.position.copy(pos); f.scale.set(0.6, 0.6, 0.6); scene.add(f);
   tween(f.material, { opacity: 0 }, 0.3, easeOut, () => scene.remove(f));
   tween(f.scale, { x: 1.2, y: 1.2, z: 1.2 }, 0.3, easeOut);
@@ -706,8 +849,11 @@ function animate() {
   if (muzzleFlash.material.opacity > 0.02) muzzleFlash.material.rotation = Math.random() * Math.PI;
 
   for (let i = smokeParticles.length - 1; i >= 0; i--) {
-    const p = smokeParticles[i]; p.life -= dt; p.mesh.position.addScaledVector(p.vel, dt);
-    p.mesh.material.opacity = Math.max(0, p.life / p.max) * 0.45; p.mesh.scale.multiplyScalar(1 + dt * 0.9);
+    const p = smokeParticles[i]; p.life -= dt;
+    if (p.grav) p.vel.y += p.grav * dt;
+    p.mesh.position.addScaledVector(p.vel, dt);
+    p.mesh.material.opacity = Math.max(0, p.life / p.max) * (p.grav ? 0.95 : 0.45);
+    p.mesh.scale.multiplyScalar(1 + dt * (p.grav ? 0.3 : 0.9));
     if (p.life <= 0) { scene.remove(p.mesh); smokeParticles.splice(i, 1); }
   }
 
@@ -717,24 +863,55 @@ function animate() {
   if (beamCone) beamCone.material.opacity = 0.06 + Math.sin(idleT * 3) * 0.012;
   if (bulbLight) bulbLight.intensity = 6 + Math.sin(idleT * 9) * 0.25;
 
-  // first-person head: base seat + tiny sway, then aim where the head looks
-  camera.position.x = CAM_POS.x + Math.sin(idleT * 0.6) * 0.012;
-  camera.position.y = CAM_POS.y + Math.sin(idleT * 0.9) * 0.008;
-  camera.position.z = CAM_POS.z;
-  if (shake > 0) { shake = Math.max(0, shake - dt * 4); camera.position.x += (Math.random() - 0.5) * shake * 0.05; camera.position.y += (Math.random() - 0.5) * shake * 0.05; }
-  const look = computeLook(sYaw, sPitch);
-  camLookTarget.copy(camera.position).add(look);
-  camera.lookAt(camLookTarget);
-  camera.updateMatrixWorld();
+  if (shake > 0) shake = Math.max(0, shake - dt * 4);
 
-  updateLook(now);       // pick target + broadcast our head/aim
-  updateAimGun(dt);      // swing the held revolver onto the target
-  updateFigures();       // turn other players' heads/arms to their targets
+  if (camMode === "cinematic") {
+    updateCinematic(dt);
+    gunRig.visible = false;
+    camera.updateMatrixWorld();
+    updateFigures();
+  } else if (camMode === "spectator") {
+    updateSpectator(dt);
+    gunRig.visible = false;
+    camera.updateMatrixWorld();
+    updateFigures();
+  } else {
+    // first-person head: base seat + tiny sway, then aim where the head looks
+    camera.position.x = CAM_POS.x + Math.sin(idleT * 0.6) * 0.012 + (Math.random() - 0.5) * shake * 0.05;
+    camera.position.y = CAM_POS.y + Math.sin(idleT * 0.9) * 0.008 + (Math.random() - 0.5) * shake * 0.05;
+    camera.position.z = CAM_POS.z;
+    const look = computeLook(sYaw, sPitch);
+    camLookTarget.copy(camera.position).add(look);
+    camera.lookAt(camLookTarget);
+    camera.updateMatrixWorld();
+    updateLook(now);       // pick target + broadcast our head/aim
+    updateAimGun(dt);      // swing the held revolver onto the target
+    updateFigures();       // turn other players' heads/arms to their targets
+  }
 
-  composer.render();
+  renderScene();
 }
 
-function show() { running = true; yaw = pitch = sYaw = sPitch = 0; if (clock) clock.getDelta(); onResize(); }
+// two-pass selective bloom: hide non-glowing objects for the bloom render only
+function renderScene() {
+  scene.traverse(hideNonBloom);
+  bloomComposer.render();
+  scene.traverse(restoreBloom);
+  finalComposer.render();
+}
+function hideNonBloom(o) {
+  if ((o.isMesh || o.isSprite || o.isPoints) && !o.userData.bloom) { o.userData._v = o.visible; o.visible = false; }
+}
+function restoreBloom(o) {
+  if (o.userData._v !== undefined) { o.visible = o.userData._v; delete o.userData._v; }
+}
+
+function show() {
+  running = true; yaw = pitch = sYaw = sPitch = 0;
+  camMode = "fp"; localAlive = true; cine = null;
+  if (bullet) { scene.remove(bullet); bullet = null; }
+  if (clock) clock.getDelta(); onResize();
+}
 function hide() {
   running = false;
   document.body.classList.remove("rl-aiming", "rl-locked");
