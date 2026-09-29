@@ -143,15 +143,10 @@
     const pl = $("rl-players"); pl.innerHTML = "";
     st.order.forEach((p) => {
       const div = document.createElement("div");
-      const canAim = myTurn && p.alive && p.sid !== App.sid;
       div.className = "pl-chip" + (p.alive ? "" : " dead") +
-        (st.turn === p.sid ? " turn" : "") +
-        (canAim ? " aimable" : "") + (st.aim === p.sid ? " aimed" : "");
+        (st.turn === p.sid ? " turn" : "") + (st.aim === p.sid ? " aimed" : "");
       div.innerHTML =
-        `<span class="dot"></span><span class="nm">${escapeHtml(p.name)}</span>` +
-        (st.aim === p.sid ? '<span class="target-x">✜</span>' : "") +
-        (p.sid === App.host ? '<span class="crown">👑</span>' : "");
-      if (canAim) div.addEventListener("click", () => socket.emit("roulette_aim", { target: p.sid }));
+        `<span class="dot"></span><span class="nm">${escapeHtml(p.name)}${p.sid === App.sid ? " (you)" : ""}</span>`;
       pl.appendChild(div);
     });
 
@@ -177,19 +172,24 @@
       $("rl-again").classList.toggle("hidden", !isHost);
     } else if (myTurn) {
       controls.classList.remove("hidden");
-      const fire = $("rl-fire");
-      const aimName = st.aim && st.aim !== App.sid
-        ? (st.order.find((p) => p.sid === st.aim) || {}).name : null;
-      if (aimName) { fire.classList.remove("hidden"); fire.textContent = `🔫 Fire at ${aimName}`; }
-      else fire.classList.add("hidden");
-      $("rl-hint").textContent = aimName
-        ? `Aiming at ${aimName} — pull the trigger`
-        : "Your turn — click a rival to aim, or test your own luck";
+      updateAimHint(st);
     } else {
       wait.classList.remove("hidden");
-      wait.textContent = `${turnName} is at the table…`;
+      wait.textContent = `${turnName} is aiming…`;
     }
   }
+
+  function updateAimHint(st) {
+    st = st || rlState; if (!st) return;
+    const aimName = st.aim && st.aim !== App.sid
+      ? (st.order.find((p) => p.sid === st.aim) || {}).name : null;
+    const hint = $("rl-hint");
+    if (hint) hint.innerHTML = aimName
+      ? `Target: <b>${escapeHtml(aimName)}</b> — click to fire`
+      : "Move the mouse to aim · click to fire";
+  }
+  // called by the 3D layer when the snapped target changes
+  window.RL_onTarget = () => updateAimHint(rlState);
 
   on("rl-start", "click", () => {
     socket.emit("roulette_start", {
@@ -197,10 +197,7 @@
       bullets: parseInt($("rl-bullets").value, 10) || 1,
     });
   });
-  on("rl-self", "click", () => socket.emit("roulette_shoot", { target: App.sid }));
-  on("rl-fire", "click", () => {
-    if (rlState && rlState.aim) socket.emit("roulette_shoot", { target: rlState.aim });
-  });
+  on("rl-self", "click", () => { if (window.RL) window.RL.shootSelf(); else socket.emit("roulette_shoot", { target: App.sid }); });
   on("rl-again", "click", () => socket.emit("roulette_reset", {}));
 
   // ---------- POKER ----------

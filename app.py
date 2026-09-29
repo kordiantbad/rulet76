@@ -39,6 +39,7 @@ HOST = "0.0.0.0"
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "bar76-" + "".join(random.choices(string.ascii_letters, k=16))
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # always revalidate static assets
+app.config["TEMPLATES_AUTO_RELOAD"] = True   # reflect template edits without a restart
 
 
 def asset_version():

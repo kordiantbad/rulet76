@@ -72,6 +72,7 @@
   <!-- ================= ROULETTE ROOM ================= -->
   <section id="screen-roulette" class="screen game-screen">
     <canvas id="rl-canvas"></canvas>
+    <div id="rl-crosshair"></div>
     <div class="hud">
       <div class="hud-top">
         <button class="ghost-btn" data-leave>← Leave</button>
@@ -85,20 +86,17 @@
         <div id="rl-host-setup" class="host-setup hidden">
           <div class="setup-row">
             <label>Chambers <input type="number" id="rl-chambers" min="2" max="8" value="6"></label>
-            <label>Live rounds <input type="number" id="rl-bullets" min="1" max="7" value="1"></label>
+            <label>Live <input type="number" id="rl-bullets" min="1" max="7" value="1"></label>
           </div>
           <button class="action-btn primary" id="rl-start">Load &amp; Start</button>
         </div>
         <div id="rl-controls" class="rl-controls hidden">
-          <div class="rl-hint" id="rl-hint">Your turn — aim at a rival or test your own luck</div>
-          <div class="rl-btn-row">
-            <button class="action-btn" id="rl-self">🎯 Shoot Yourself</button>
-            <button class="action-btn danger hidden" id="rl-fire">🔫 Fire!</button>
-          </div>
+          <div class="rl-hint" id="rl-hint">Move the mouse to aim · click to fire</div>
+          <button class="action-btn danger" id="rl-self">Shoot yourself</button>
         </div>
         <div id="rl-over" class="rl-over hidden">
           <div id="rl-winner">Winner</div>
-          <button class="action-btn primary" id="rl-again">Play Again</button>
+          <button class="action-btn primary" id="rl-again">Play again</button>
         </div>
         <div id="rl-wait" class="rl-wait">The host will start the round…</div>
       </div>
