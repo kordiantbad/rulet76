@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+  <title>BAR 76 — Underground Lounge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Oswald:wght@300;400;600&family=Special+Elite&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+  <!-- ambient neon backdrop -->
+  <div id="ambient"></div>
+  <div id="grain"></div>
+
+  <!-- ================= HOME / LOUNGE ENTRANCE ================= -->
+  <section id="screen-home" class="screen active">
+    <div class="home-inner">
+      <div class="marquee">
+        <div class="neon-frame">
+          <h1 class="logo">BAR&nbsp;<span class="seven">76</span></h1>
+          <p class="tagline">UNDERGROUND&nbsp;·&nbsp;LOUNGE&nbsp;·&nbsp;GAMES</p>
+        </div>
+      </div>
+
+      <div class="name-row">
+        <label>Your name at the bar</label>
+        <input id="playerName" maxlength="16" placeholder="Stranger" autocomplete="off" />
+      </div>
+
+      <div class="game-cards">
+        <div class="gcard" data-game="roulette">
+          <div class="gcard-art art-roulette"><span class="emoji">🔫</span></div>
+          <h3>Russian Roulette</h3>
+          <p>Six chambers. One bullet. Last soul standing wins the pot.</p>
+          <div class="tag multiplayer">2–8 players · online</div>
+        </div>
+        <div class="gcard" data-game="poker">
+          <div class="gcard-art art-poker"><span class="emoji">🂡</span></div>
+          <h3>Texas Hold'em</h3>
+          <p>Read the table, bluff your friends, stack the chips.</p>
+          <div class="tag multiplayer">2–8 players · online</div>
+        </div>
+        <div class="gcard" data-game="blackjack">
+          <div class="gcard-art art-blackjack"><span class="emoji">♠</span></div>
+          <h3>Blackjack</h3>
+          <p>You against the house. Hit, stand, double down. Beat 21.</p>
+          <div class="tag single">solo minigame</div>
+        </div>
+      </div>
+
+      <p class="footer-note">Grab a name, pick your poison. Multiplayer tables share a 4-letter code.</p>
+    </div>
+  </section>
+
+  <!-- ================= JOIN / HOST PANEL ================= -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" data-close>✕</button>
+      <h2 id="modalTitle">Russian Roulette</h2>
+      <div class="modal-body">
+        <button class="big-btn host" id="btnHost">🎲 Host a new table</button>
+        <div class="divider"><span>or join friends</span></div>
+        <div class="join-row">
+          <input id="joinCode" maxlength="4" placeholder="CODE" />
+          <button class="big-btn join" id="btnJoin">Join</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= ROULETTE ROOM ================= -->
+  <section id="screen-roulette" class="screen game-screen">
+    <canvas id="rl-canvas"></canvas>
+    <div class="hud">
+      <div class="hud-top">
+        <button class="ghost-btn" data-leave>← Leave</button>
+        <div class="room-code">TABLE <b id="rl-code">----</b></div>
+        <div class="turn-banner" id="rl-turn">Waiting…</div>
+      </div>
+
+      <div class="hud-left" id="rl-players"></div>
+
+      <div class="hud-bottom">
+        <div id="rl-host-setup" class="host-setup hidden">
+          <div class="setup-row">
+            <label>Chambers <input type="number" id="rl-chambers" min="2" max="8" value="6"></label>
+            <label>Live rounds <input type="number" id="rl-bullets" min="1" max="7" value="1"></label>
+          </div>
+          <button class="action-btn primary" id="rl-start">Load &amp; Start</button>
+        </div>
+        <div id="rl-controls" class="rl-controls hidden">
+          <button class="action-btn" id="rl-spin">🌀 Spin Cylinder</button>
+          <button class="action-btn danger" id="rl-pull">☠ Pull Trigger</button>
+        </div>
+        <div id="rl-over" class="rl-over hidden">
+          <div id="rl-winner">Winner</div>
+          <button class="action-btn primary" id="rl-again">Play Again</button>
+        </div>
+        <div id="rl-wait" class="rl-wait">The host will start the round…</div>
+      </div>
+      <div class="msg-flash" id="rl-flash"></div>
+    </div>
+  </section>
+
+  <!-- ================= POKER ROOM ================= -->
+  <section id="screen-poker" class="screen game-screen">
+    <div id="poker-felt">
+      <div class="hud-top">
+        <button class="ghost-btn" data-leave>← Leave</button>
+        <div class="room-code">TABLE <b id="pk-code">----</b></div>
+        <div class="pk-pot">POT <b id="pk-pot">0</b></div>
+      </div>
+
+      <div id="pk-table">
+        <div id="pk-board"></div>
+        <div id="pk-community-label" class="pk-stage"></div>
+        <div id="pk-seats"></div>
+      </div>
+
+      <div id="pk-result" class="pk-result hidden"></div>
+
+      <div class="pk-bottom">
+        <div id="pk-host-setup" class="pk-actions">
+          <button class="action-btn primary" id="pk-deal">Deal Hand</button>
+        </div>
+        <div id="pk-actions" class="pk-actions hidden">
+          <button class="action-btn" id="pk-fold">Fold</button>
+          <button class="action-btn" id="pk-check">Check</button>
+          <button class="action-btn" id="pk-call">Call</button>
+          <div class="raise-group">
+            <input type="range" id="pk-slider" min="0" max="100" value="0" />
+            <span id="pk-raise-amt">0</span>
+            <button class="action-btn primary" id="pk-raise">Raise</button>
+          </div>
+        </div>
+        <div id="pk-wait" class="pk-wait">Waiting for the deal…</div>
+      </div>
+      <div class="msg-flash" id="pk-flash"></div>
+    </div>
+  </section>
+
+  <!-- ================= BLACKJACK (SOLO) ================= -->
+  <section id="screen-blackjack" class="screen game-screen">
+    <div id="bj-felt">
+      <div class="hud-top">
+        <button class="ghost-btn" data-leave>← Leave</button>
+        <div class="bj-title">BLACKJACK</div>
+        <div class="bj-bank">BANK <b id="bj-bank">1000</b></div>
+      </div>
+
+      <div class="bj-area">
+        <div class="bj-row">
+          <div class="bj-label">DEALER <span id="bj-dealer-score"></span></div>
+          <div id="bj-dealer" class="bj-cards"></div>
+        </div>
+        <div class="bj-center" id="bj-message">Place your bet</div>
+        <div class="bj-row">
+          <div class="bj-label">YOU <span id="bj-player-score"></span></div>
+          <div id="bj-player" class="bj-cards"></div>
+        </div>
+      </div>
+
+      <div class="bj-bottom">
+        <div id="bj-bet-panel" class="bj-panel">
+          <div class="chip-row">
+            <button class="chip c5" data-chip="5">5</button>
+            <button class="chip c25" data-chip="25">25</button>
+            <button class="chip c100" data-chip="100">100</button>
+            <button class="chip c500" data-chip="500">500</button>
+          </div>
+          <div class="bet-display">BET <b id="bj-bet">0</b></div>
+          <div class="bj-bet-btns">
+            <button class="action-btn" id="bj-clear">Clear</button>
+            <button class="action-btn primary" id="bj-deal">Deal</button>
+          </div>
+        </div>
+        <div id="bj-play-panel" class="bj-panel hidden">
+          <button class="action-btn" id="bj-hit">Hit</button>
+          <button class="action-btn" id="bj-stand">Stand</button>
+          <button class="action-btn" id="bj-double">Double</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SHARED CHAT DOCK ================= -->
+  <div id="chat-dock" class="chat-dock hidden">
+    <button id="chat-toggle" class="chat-toggle">💬</button>
+    <div id="chat-panel" class="chat-panel">
+      <div id="chat-log" class="chat-log"></div>
+      <div class="chat-input">
+        <input id="chat-msg" maxlength="200" placeholder="Say something…" />
+        <button id="chat-send">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script src="/static/js/blackjack.js"></script>
+  <script src="/static/js/poker.js"></script>
+  <script type="module" src="/static/js/roulette.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
