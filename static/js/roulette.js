@@ -27,6 +27,7 @@ const GUNMETAL = 0x23262c, WOOD = 0x4a2c18;
 const PALETTE = [0xe5484d, 0x4cc2ff, 0x3fb950, 0xbf7af0, 0xf2a53c, 0x2dd4bf, 0xf778ba, 0xa0a0a0];
 
 const players = new Map();  // sid -> record
+let selfModel = null;       // 3D body for the local player (kill-cam / spectator)
 let curState = null, localSid = null, orderKey = "";
 let currentTarget = null, myTurn = false;
 
@@ -45,6 +46,7 @@ const camLookTarget = new THREE.Vector3();
 // ---- easing / tween ----
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const easeIn = (t) => t * t * t;
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 let tweens = [];
 function tween(obj, to, dur, ease, onDone) {
   const from = {}; for (const k in to) from[k] = path(obj, k);
@@ -118,6 +120,8 @@ function makeFlashTexture() {
   for (let i = 0; i < 8; i++) { x.beginPath(); x.moveTo(64, 64); const a = i / 8 * Math.PI * 2; x.lineTo(64 + Math.cos(a) * 60, 64 + Math.sin(a) * 60); x.stroke(); }
   return new THREE.CanvasTexture(c);
 }
+let FLASH_TEX = null;
+function flashTex() { if (!FLASH_TEX) FLASH_TEX = makeFlashTexture(); return FLASH_TEX; }
 let SMOKE_TEX = null;
 function makeSmokeTexture() {
   const c = document.createElement("canvas"); c.width = c.height = 64; const x = c.getContext("2d");
@@ -218,25 +222,111 @@ function drawStick(ctx, W, H, opts) {
   ctx.restore();
 }
 
-function makeFigure(pose, color, name) {
-  const rec = { pose, color, name, alive: true, lookYaw: 0, lookPitch: 0, aimTarget: null, drawKey: "" };
-  const c = document.createElement("canvas"); c.width = 220; c.height = 360;
-  drawStick(c.getContext("2d"), c.width, c.height, { pose, color, dead: false });
-  const tex = new THREE.CanvasTexture(c);
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-  spr.scale.set(1.35, 2.15, 1); spr.position.set(0, 1.07, 0);  // feet on the floor
-  rec.canvas = c; rec.tex = tex; rec.body = spr;
-  const outer = new THREE.Group(); outer.add(spr);
-  const label = makeLabel(name); label.position.set(0, 2.2, 0); outer.add(label);
-  rec.label = label; rec.outer = outer;
+// =========================================================================
+//  3D CHARACTER MODELS — articulated, white with a black outline, hold + aim
+//  a real 3D revolver. Head + gun-arm pivot toward whoever they target.
+// =========================================================================
+const _wp = new THREE.Vector3(), _pq = new THREE.Quaternion();
+const _aimDummy = new THREE.Object3D();
+// smoothly rotate a pivot so its -Z axis points at a world target
+function aimAt(pivot, targetWorld, dt, sp) {
+  if (!pivot.parent) return;
+  pivot.parent.updateWorldMatrix(true, false);
+  _aimDummy.position.copy(pivot.getWorldPosition(_wp));
+  _aimDummy.up.set(0, 1, 0);
+  _aimDummy.lookAt(targetWorld);
+  pivot.parent.getWorldQuaternion(_pq).invert();
+  const goal = _pq.multiply(_aimDummy.quaternion);
+  pivot.quaternion.slerp(goal, Math.min(dt * (sp || 10), 1));
+}
+
+function buildCharGun() {
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: 0x23262c, roughness: 0.32, metalness: 0.92 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x4a2c18, roughness: 0.6 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.075, 0.12), steel); body.position.z = -0.04; g.add(body);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.22, 14), steel); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.02, -0.17); g.add(barrel);
+  const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.05, 16), steel); cyl.rotation.x = Math.PI / 2; cyl.position.set(0, 0, -0.04); g.add(cyl);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.05), wood); grip.position.set(0, -0.07, 0.03); grip.rotation.x = -0.35; g.add(grip);
+  return g;
+}
+
+function makeModel3D(color, name) {
+  const rec = { color, name, alive: true, lookYaw: 0, lookPitch: 0, aimTarget: null, selfShot: false };
+  const outer = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf3f3f3, roughness: 0.82, metalness: 0.0 });
+  const outMat = new THREE.MeshBasicMaterial({ color: 0x0b0b0b, side: THREE.BackSide });
+  rec.bodyMat = bodyMat;
+  const P = (geo, x, y, z, parent, rx) => {
+    const m = new THREE.Mesh(geo, bodyMat); m.position.set(x, y, z); if (rx) m.rotation.x = rx;
+    const o = new THREE.Mesh(geo, outMat); o.scale.setScalar(1.13); m.add(o);
+    (parent || outer).add(m); return m;
+  };
+  // legs, hips, torso
+  P(new THREE.CapsuleGeometry(0.08, 0.48, 4, 10), -0.11, 0.32, 0);
+  P(new THREE.CapsuleGeometry(0.08, 0.48, 4, 10), 0.11, 0.32, 0);
+  P(new THREE.CapsuleGeometry(0.17, 0.1, 4, 12), 0, 0.72, 0);
+  P(new THREE.CapsuleGeometry(0.18, 0.36, 4, 14), 0, 1.04, 0);
+  // relaxed left arm
+  const lArm = new THREE.Group(); lArm.position.set(-0.24, 1.3, 0); lArm.rotation.x = 0.15; outer.add(lArm);
+  P(new THREE.CapsuleGeometry(0.06, 0.36, 4, 10), 0, -0.2, 0, lArm);
+  // head pivot
+  const headPivot = new THREE.Group(); headPivot.position.set(0, 1.4, 0); outer.add(headPivot);
+  P(new THREE.CylinderGeometry(0.055, 0.055, 0.09, 10), 0, 0.03, 0, headPivot);
+  P(new THREE.SphereGeometry(0.145, 18, 16), 0, 0.19, 0, headPivot);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0a0a0a });
+  [-0.05, 0.05].forEach((x) => { const e = new THREE.Mesh(new THREE.SphereGeometry(0.023, 8, 8), eyeMat); e.position.set(x, 0.2, -0.132); headPivot.add(e); });
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.024, 8, 22), new THREE.MeshStandardMaterial({ color, roughness: 0.45, emissive: color, emissiveIntensity: 0.3 }));
+  band.rotation.x = Math.PI / 2; band.position.set(0, 0.25, 0); headPivot.add(band);
+  // right gun-arm — everything extends toward -Z so aimAt() points it
+  const armPivot = new THREE.Group(); armPivot.position.set(0.24, 1.3, 0); outer.add(armPivot);
+  P(new THREE.CapsuleGeometry(0.06, 0.28, 4, 10), 0, 0, -0.18, armPivot, Math.PI / 2);
+  P(new THREE.CapsuleGeometry(0.055, 0.26, 4, 10), 0, 0, -0.46, armPivot, Math.PI / 2);
+  P(new THREE.SphereGeometry(0.06, 12, 12), 0, 0, -0.62, armPivot);
+  const gun = buildCharGun(); gun.position.set(0, 0, -0.68); armPivot.add(gun);
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.02, -0.9); armPivot.add(muzzle);
+  const label = makeLabel(name); label.position.set(0, 2.05, 0); outer.add(label);
+
+  rec.outer = outer; rec.headPivot = headPivot; rec.armPivot = armPivot; rec.gun = gun; rec.muzzle = muzzle; rec.label = label;
   return rec;
 }
-function redrawFigure(rec) {
-  drawStick(rec.canvas.getContext("2d"), rec.canvas.width, rec.canvas.height,
-    { pose: rec.pose, color: rec.color, dead: !rec.alive });
-  rec.tex.needsUpdate = true;
-  rec.body.material.opacity = rec.alive ? 1 : 0.6;
+
+function setModelDead(rec) {
+  if (!rec) return;
+  rec.alive = false;
+  rec.bodyMat.color.set(0x8a8f96);
+  tween(rec.outer, { "rotation.x": -Math.PI / 2 + 0.1 }, 0.55, easeOut);
+  tween(rec.armPivot, { "rotation.x": -0.7, "rotation.y": 0.4 }, 0.4, easeOut);
 }
+
+function headWorldOf(sid) {
+  if (sid === localSid) return new THREE.Vector3(CAM_POS.x, 1.5, CAM_POS.z);
+  const r = players.get(sid); return r ? r.headPos.clone() : new THREE.Vector3(0, 1.4, 0);
+}
+function muzzleWorldOf(sid) {
+  const r = (sid === localSid) ? selfModel : players.get(sid);
+  if (r && r.muzzle) { r.outer.updateWorldMatrix(true, true); return r.muzzle.getWorldPosition(new THREE.Vector3()); }
+  return worldSeat(sid).setY(1.35);
+}
+function driveModelToTarget(rec, tgtSid, selfAim, dt) {
+  if (!rec || !rec.alive) return;
+  if (selfAim) {
+    const own = rec.headPivot.getWorldPosition(new THREE.Vector3());
+    aimAt(rec.armPivot, own, dt, 12);
+    const fwd = rec.outer.localToWorld(new THREE.Vector3(0, 1.6, -1.2));
+    aimAt(rec.headPivot, fwd, dt, 8);
+    return;
+  }
+  if (tgtSid && (players.get(tgtSid) || tgtSid === localSid)) {
+    const w = headWorldOf(tgtSid);
+    aimAt(rec.armPivot, w, dt, 10);
+    aimAt(rec.headPivot, w, dt, 8);
+  } else {
+    aimAt(rec.armPivot, rec.outer.localToWorld(new THREE.Vector3(0.24, 0.75, -0.55)), dt, 8);
+    aimAt(rec.headPivot, rec.outer.localToWorld(new THREE.Vector3(rec.lookYaw * 0.7, 1.5, -1.3)), dt, 6);
+  }
+}
+
 function makeLabel(name) {
   const c = document.createElement("canvas"); c.width = 256; c.height = 64; drawLabel(c, name, false);
   const tex = new THREE.CanvasTexture(c);
@@ -504,22 +594,39 @@ function onKeyDown(e) {
 // =========================================================================
 //  STATE
 // =========================================================================
+function placeModel(rec, pos) {
+  rec.outer.position.copy(pos);
+  rec.outer.rotation.y = Math.atan2(pos.x, pos.z); // face the table centre
+  rec.pos = pos.clone(); rec.headPos = pos.clone().setY(1.55); rec.center = pos.clone().setY(1.1);
+}
 function rebuild(order, localS) {
   for (const rec of players.values()) scene.remove(rec.outer);
   players.clear();
+  if (selfModel) { scene.remove(selfModel.outer); selfModel = null; }
+
   const others = order.filter((o) => o.sid !== localS);
   const M = others.length;
   others.forEach((o, i) => {
     const frac = M <= 1 ? 0.5 : i / (M - 1);
     const ang = THREE.MathUtils.lerp(-1.15, 1.15, frac);
-    const Rx = 2.2, Rz = 1.75;
-    const pos = new THREE.Vector3(Math.sin(ang) * Rx, 0, -Math.cos(ang) * Rz);
+    const pos = new THREE.Vector3(Math.sin(ang) * 2.2, 0, -Math.cos(ang) * 1.75);
     const gi = order.findIndex((x) => x.sid === o.sid);
-    const rec = makeFigure(gi, PALETTE[gi % PALETTE.length], o.name);
-    rec.outer.position.copy(pos);
-    rec.pos = pos.clone(); rec.headPos = pos.clone().setY(1.62); rec.center = pos.clone().setY(1.15);
+    const rec = makeModel3D(PALETTE[gi % PALETTE.length], o.name);
+    placeModel(rec, pos);
     scene.add(rec.outer); players.set(o.sid, rec);
   });
+
+  // a body for the local player too (hidden in first person, shown in the
+  // kill-cam and while spectating)
+  const meIndex = order.findIndex((x) => x.sid === localS);
+  if (meIndex >= 0) {
+    selfModel = makeModel3D(PALETTE[meIndex % PALETTE.length], order[meIndex].name + " (you)");
+    placeModel(selfModel, new THREE.Vector3(CAM_POS.x, 0, CAM_POS.z));
+    selfModel.outer.rotation.y = Math.PI; // face across the table
+    selfModel.headPos = new THREE.Vector3(CAM_POS.x, 1.5, CAM_POS.z);
+    selfModel.outer.visible = false;
+    scene.add(selfModel.outer);
+  }
 }
 
 function setState(st, localS) {
@@ -528,10 +635,13 @@ function setState(st, localS) {
   if (key !== orderKey) { orderKey = key; rebuild(st.order, localS); }
   st.order.forEach((o) => {
     const rec = players.get(o.sid); if (!rec) return;
-    if (!o.alive && rec.alive) { rec.alive = false; redrawFigure(rec); }
+    if (!o.alive && rec.alive) setModelDead(rec);
     const active = st.turn === o.sid && st.state === "playing";
     if (rec.labelActive !== active) { rec.labelActive = active; drawLabel(rec.label.userData.canvas, rec.label.userData.name, active); rec.label.userData.tex.needsUpdate = true; }
   });
+  // local player's own body dies too
+  const meRec = st.order.find((o) => o.sid === localSid);
+  if (meRec && !meRec.alive && selfModel && selfModel.alive) setModelDead(selfModel);
 
   // track whether the local player is still alive → spectator overview on death
   const me = st.order.find((o) => o.sid === localSid);
@@ -622,26 +732,19 @@ function updateLook(now) {
     }
   }
 }
-// redraw other players' figures so head + gun arm follow where THEY look/aim
-function projNDC(v) { const p = v.clone().project(camera); return { x: p.x, y: p.y }; }
-function updateFigures() {
+// drive every 3D model's head + gun-arm toward whoever they look at / target
+function updateRig(dt) {
   for (const [sid, rec] of players) {
     if (!rec.alive) continue;
-    const selfAim = !!rec.selfShot;
-    let aimDeg = null, headTurn = Math.max(-1, Math.min(1, rec.lookYaw / YAW_LIMIT));
-    const tgt = !selfAim && rec.aimTarget && players.get(rec.aimTarget);
-    if (tgt && tgt.alive) {
-      const a = projNDC(rec.headPos), b = projNDC(tgt.headPos);
-      aimDeg = Math.atan2(-(b.y - a.y), (b.x - a.x) * camera.aspect);
-      headTurn = Math.max(-1, Math.min(1, Math.cos(aimDeg)));
-    }
-    const holdGun = selfAim || !!(curState && curState.state === "playing" && curState.turn === sid);
-    const key = (selfAim ? "self" : aimDeg === null ? "n" : aimDeg.toFixed(1)) + "|" + headTurn.toFixed(1) + "|" + (holdGun ? 1 : 0);
-    if (key !== rec.drawKey) {
-      rec.drawKey = key;
-      drawStick(rec.canvas.getContext("2d"), rec.canvas.width, rec.canvas.height,
-        { pose: rec.pose, color: rec.color, dead: false, aimDeg, headTurn, holdGun, selfAim });
-      rec.tex.needsUpdate = true;
+    driveModelToTarget(rec, rec.selfShot ? sid : rec.aimTarget, !!rec.selfShot, dt);
+  }
+  if (selfModel && selfModel.alive) {
+    const show = camMode !== "fp";
+    selfModel.outer.visible = show; selfModel.label.visible = show;
+    if (show) {
+      const selfA = !!(cine && cine.self) || selfModel.selfShot;
+      const tgt = selfA ? localSid : (cine ? cine.victimSid : currentTarget);
+      driveModelToTarget(selfModel, tgt, selfA, dt);
     }
   }
 }
@@ -658,63 +761,110 @@ function worldSeat(sid) {
   if (sid === localSid) return new THREE.Vector3(CAM_POS.x, 0, CAM_POS.z);
   const r = players.get(sid); return r ? r.pos.clone() : new THREE.Vector3(0, 0, 0);
 }
+// a real 3D bullet: brass jacket + lead tip, hot glowing base, tracer + light
 function spawnBullet(from, to) {
   if (bullet) { scene.remove(bullet); bullet = null; }
-  const b = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 10),
-    new THREE.MeshStandardMaterial({ color: 0xfff0c0, emissive: 0xffb020, emissiveIntensity: 4 }));
-  b.userData.bloom = true; b.position.copy(from);
-  b.userData.from = from.clone(); b.userData.to = to.clone();
-  // a stretched glow trail behind the round
-  const trail = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeFlashTexture(), color: 0xffcc66, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
-  trail.userData.bloom = true; trail.scale.set(0.5, 0.12, 1); b.add(trail);
-  scene.add(b); bullet = b;
+  const g = new THREE.Group();
+  const brass = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.22, metalness: 1.0 });
+  const lead = new THREE.MeshStandardMaterial({ color: 0xc9c9cc, roughness: 0.3, metalness: 0.85 });
+  const jacket = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.026, 0.06, 18), brass); jacket.rotation.x = Math.PI / 2; g.add(jacket);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.024, 0.05, 18), lead); tip.rotation.x = -Math.PI / 2; tip.position.z = -0.055; g.add(tip);
+  const hot = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: 0xffab30, emissiveIntensity: 5 })); hot.position.z = 0.035; hot.userData.bloom = true; g.add(hot);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTex(), color: 0xffd27a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })); glow.userData.bloom = true; glow.scale.set(0.4, 0.4, 1); glow.position.z = 0.03; g.add(glow);
+  const tracer = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.001, 0.7, 8), new THREE.MeshStandardMaterial({ color: 0xffce80, emissive: 0xffb040, emissiveIntensity: 3, transparent: true, opacity: 0.55, depthWrite: false })); tracer.rotation.x = Math.PI / 2; tracer.position.z = 0.36; tracer.userData.bloom = true; g.add(tracer);
+  g.add(new THREE.PointLight(0xffb060, 2.4, 3, 2));
+  g.position.copy(from); g.lookAt(to); g.userData.from = from.clone(); g.userData.to = to.clone();
+  scene.add(g); bullet = g;
 }
 function spawnBlood(pos) {
   if (!SMOKE_TEX) SMOKE_TEX = makeSmokeTexture();
-  for (let i = 0; i < 10; i++) {
-    const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: SMOKE_TEX, color: 0xc21414, transparent: true, opacity: 0.9, depthWrite: false }));
-    m.position.copy(pos); m.scale.set(0.06, 0.06, 0.06); scene.add(m);
-    smokeParticles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 0.9, 0.3 + Math.random() * 0.5, (Math.random() - 0.5) * 0.9), life: 0.9, max: 0.9, grav: -1.6 });
+  for (let i = 0; i < 16; i++) {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: SMOKE_TEX, color: 0xb01010, transparent: true, opacity: 0.95, depthWrite: false }));
+    m.position.copy(pos); m.scale.set(0.05, 0.05, 0.05); scene.add(m);
+    smokeParticles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.4, 0.4 + Math.random() * 0.8, (Math.random() - 0.5) * 1.4), life: 0.9, max: 0.9, grav: -2.2 });
   }
 }
+function spawnSparks(pos) {
+  if (!SMOKE_TEX) SMOKE_TEX = makeSmokeTexture();
+  for (let i = 0; i < 14; i++) {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTex(), color: 0xffd27a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+    m.userData.bloom = true; m.position.copy(pos); m.scale.set(0.05, 0.05, 0.05); scene.add(m);
+    smokeParticles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 3, (Math.random() - 0.2) * 2.5, (Math.random() - 0.5) * 3), life: 0.35, max: 0.35, grav: -3, spark: true });
+  }
+}
+function muzzleFlashAt(pos) {
+  const f = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTex(), color: 0xffdd88, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+  f.userData.bloom = true; f.position.copy(pos); f.scale.set(0.5, 0.5, 0.5); scene.add(f);
+  tween(f.material, { opacity: 0 }, 0.16, easeOut, () => scene.remove(f));
+  tween(f.scale, { x: 1.0, y: 1.0, z: 1.0 }, 0.16, easeOut);
+  const pl = new THREE.PointLight(0xffb060, 10, 4, 2); pl.position.copy(pos); scene.add(pl);
+  tween(pl, { intensity: 0 }, 0.2, easeOut, () => scene.remove(pl));
+}
 function startCinematic(shooterSid, victimSid, self) {
-  const sPos = worldSeat(shooterSid), vPos = worldSeat(victimSid);
-  const vHead = vPos.clone().setY(1.6);
-  const sHand = self ? vHead.clone() : sPos.clone().lerp(vHead, 0.22).setY(1.5);
-  let camPos, look, bulletTo;
+  // keep the shooter's model pointing at the victim throughout the shot
+  const srec = players.get(shooterSid);
+  if (srec) { srec.aimTarget = self ? null : victimSid; srec.selfShot = self; }
+  if (shooterSid === localSid && selfModel) { selfModel.selfShot = self; }
+
+  const vPos = worldSeat(victimSid);
+  const vHead = self ? headWorldOf(victimSid) : headWorldOf(victimSid);
+  // snap the shooter's arm at the victim so the muzzle points right, then read it
+  const shooterModel = shooterSid === localSid ? selfModel : players.get(shooterSid);
+  if (shooterModel) { if (shooterModel === selfModel) selfModel.outer.visible = true; driveModelToTarget(shooterModel, self ? localSid : victimSid, self, 1); shooterModel.outer.updateWorldMatrix(true, true); }
+  const muzzle = muzzleWorldOf(shooterSid);
+
+  let camPos, camMid, bulletTo;
   if (self) {
-    const outward = vPos.clone().setY(0);
-    if (outward.lengthSq() < 1e-4) outward.set(0, 0, 1); else outward.normalize();
+    const outward = vPos.clone().setY(0); if (outward.lengthSq() < 1e-4) outward.set(0, 0, 1); else outward.normalize();
     const side = new THREE.Vector3().crossVectors(outward, UP).normalize();
-    camPos = vHead.clone().add(side.multiplyScalar(1.5)).add(outward.clone().multiplyScalar(0.7)).add(new THREE.Vector3(0, 0.25, 0));
-    look = vHead.clone();
-    bulletTo = vHead.clone().add(outward.clone().multiplyScalar(-0.1)).add(new THREE.Vector3(0, 0.9, 0)); // out the top of the head
+    camPos = vHead.clone().add(side.multiplyScalar(1.4)).add(outward.clone().multiplyScalar(0.8)).add(new THREE.Vector3(0, 0.2, 0));
+    camMid = camPos.clone();
+    bulletTo = vHead.clone().add(new THREE.Vector3(0, 0.9, 0)).add(outward.clone().multiplyScalar(-0.15)); // out the top of the head
   } else {
-    const dir = vHead.clone().sub(sHand).setY(0);
-    if (dir.lengthSq() < 1e-4) dir.set(0, 0, -1); else dir.normalize();
+    const dir = vHead.clone().sub(muzzle).setY(0); if (dir.lengthSq() < 1e-4) dir.set(0, 0, -1); else dir.normalize();
     const side = new THREE.Vector3().crossVectors(dir, UP).normalize();
-    const mid = sHand.clone().lerp(vHead, 0.5);
-    camPos = mid.clone().add(side.multiplyScalar(2.1)).add(new THREE.Vector3(0, 0.5, 0));
-    look = mid;
+    const mid = muzzle.clone().lerp(vHead, 0.5);
+    camPos = muzzle.clone().add(side.multiplyScalar(0.5)).add(dir.clone().multiplyScalar(-0.25)).add(new THREE.Vector3(0, 0.18, 0)); // over the shoulder
+    camMid = mid.clone().add(side.multiplyScalar(1.7)).add(new THREE.Vector3(0, 0.45, 0));                                       // side tracking
     bulletTo = vHead.clone();
   }
-  cine = { t: 0, dur: 2.6, hitAt: 0.62, camPos, look, camFrom: camera.position.clone(), lookFrom: camLookTarget.clone(), self, victimSid, victimHead: vHead, impacted: false };
-  spawnBullet(sHand, bulletTo);
+  cine = {
+    t: 0, dur: 2.9, hitAt: 0.72, self, victimSid, victimHead: vHead,
+    camFrom: camera.position.clone(), lookFrom: camLookTarget.clone(),
+    camA: camPos, camB: camMid, camC: vHead.clone().add(new THREE.Vector3(0, 0.15, 0)),
+    impacted: false, flashed: false,
+  };
+  spawnBullet(muzzle, bulletTo);
   camMode = "cinematic";
   if (document.pointerLockElement) { try { document.exitPointerLock(); } catch (_) {} }
 }
 function updateCinematic(dt) {
   const c = cine; if (!c) { camMode = localAlive ? "fp" : "spectator"; return; }
   c.t += dt; const p = Math.min(c.t / c.dur, 1);
-  const ce = easeOut(Math.min(p * 1.25, 1));
-  camera.position.lerpVectors(c.camFrom, c.camPos, ce);
-  camLookTarget.lerpVectors(c.lookFrom, c.look, ce);
+
+  // muzzle flash + spark at the very start
+  if (!c.flashed && bullet) { c.flashed = true; muzzleFlashAt(bullet.userData.from); spawnSparks(bullet.userData.from); shake = 0.5; }
+
+  // camera: quick over-the-shoulder push (0-25%), then slow side track to victim
+  if (p < 0.25) {
+    const e = easeOut(p / 0.25);
+    camera.position.lerpVectors(c.camFrom, c.camA, e);
+  } else {
+    const e = easeInOut((p - 0.25) / 0.75);
+    camera.position.lerpVectors(c.camA, c.camB.clone().lerp(c.camC, 0.35 * e), e);
+  }
+  // look at the bullet while it flies, then hold on the victim
+  const bp = Math.min(p / c.hitAt, 1);
+  if (bullet && bp < 1) camLookTarget.lerp(bullet.position, Math.min(dt * 8, 1));
+  else camLookTarget.lerp(c.victimHead, Math.min(dt * 6, 1));
   camera.lookAt(camLookTarget);
+
   if (bullet) {
-    const bp = Math.min(p / c.hitAt, 1);
-    bullet.position.lerpVectors(bullet.userData.from, bullet.userData.to, easeIn(bp));
+    bullet.position.lerpVectors(bullet.userData.from, bullet.userData.to, easeInOut(bp));
+    bullet.lookAt(bullet.userData.to);
+    bullet.rotateZ(dt * 30); // spin
     if (bp >= 1 && !c.impacted) {
-      c.impacted = true; observerFlash(c.victimHead); spawnBlood(c.victimHead); shake = 0.7;
+      c.impacted = true; observerFlash(c.victimHead); spawnSparks(c.victimHead); spawnBlood(c.victimHead); shake = 0.9;
       scene.remove(bullet); bullet = null;
     }
   }
@@ -869,12 +1019,12 @@ function animate() {
     updateCinematic(dt);
     gunRig.visible = false;
     camera.updateMatrixWorld();
-    updateFigures();
+    updateRig(dt);
   } else if (camMode === "spectator") {
     updateSpectator(dt);
     gunRig.visible = false;
     camera.updateMatrixWorld();
-    updateFigures();
+    updateRig(dt);
   } else {
     // first-person head: base seat + tiny sway, then aim where the head looks
     camera.position.x = CAM_POS.x + Math.sin(idleT * 0.6) * 0.012 + (Math.random() - 0.5) * shake * 0.05;
@@ -886,7 +1036,7 @@ function animate() {
     camera.updateMatrixWorld();
     updateLook(now);       // pick target + broadcast our head/aim
     updateAimGun(dt);      // swing the held revolver onto the target
-    updateFigures();       // turn other players' heads/arms to their targets
+    updateRig(dt);         // turn other players' heads/arms to their targets
   }
 
   renderScene();
