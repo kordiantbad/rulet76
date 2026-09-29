@@ -1,6 +1,8 @@
 /* BAR 76 — router, socket wiring, lobby + roulette HUD, chat. */
 (function () {
   const $ = (id) => document.getElementById(id);
+  // resilient binder: never let one missing element break later bindings
+  const on = (id, evt, fn) => { const el = $(id); if (el) el.addEventListener(evt, fn); else console.warn("bind: #" + id + " missing"); };
   const socket = io({ transports: ["websocket", "polling"] });
   window.socket = socket;
 
@@ -20,7 +22,7 @@
   // ---------- name persistence ----------
   const savedName = localStorage.getItem("bar76_name") || "";
   $("playerName").value = savedName;
-  $("playerName").addEventListener("input", () =>
+  on("playerName", "input", () =>
     localStorage.setItem("bar76_name", $("playerName").value.trim()));
   function myName() { return ($("playerName").value.trim() || "Stranger").slice(0, 16); }
 
@@ -71,14 +73,15 @@
       $("modal").classList.remove("hidden");
     });
   });
-  $("modal").querySelector("[data-close]").addEventListener("click", () => $("modal").classList.add("hidden"));
-  $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").classList.add("hidden"); });
+  const modalClose = $("modal") && $("modal").querySelector("[data-close]");
+  if (modalClose) modalClose.addEventListener("click", () => $("modal").classList.add("hidden"));
+  on("modal", "click", (e) => { if (e.target.id === "modal") $("modal").classList.add("hidden"); });
 
-  $("btnHost").addEventListener("click", () => {
+  on("btnHost", "click", () => {
     socket.emit("create_room", { name: myName(), game: pendingGame });
     $("modal").classList.add("hidden");
   });
-  $("btnJoin").addEventListener("click", () => {
+  on("btnJoin", "click", () => {
     const code = $("joinCode").value.trim().toUpperCase();
     if (code.length !== 4) { toast("Enter a 4-letter code"); return; }
     socket.emit("join_room", { name: myName(), code });
@@ -188,17 +191,17 @@
     }
   }
 
-  $("rl-start").addEventListener("click", () => {
+  on("rl-start", "click", () => {
     socket.emit("roulette_start", {
       chambers: parseInt($("rl-chambers").value, 10) || 6,
       bullets: parseInt($("rl-bullets").value, 10) || 1,
     });
   });
-  $("rl-self").addEventListener("click", () => socket.emit("roulette_shoot", { target: App.sid }));
-  $("rl-fire").addEventListener("click", () => {
+  on("rl-self", "click", () => socket.emit("roulette_shoot", { target: App.sid }));
+  on("rl-fire", "click", () => {
     if (rlState && rlState.aim) socket.emit("roulette_shoot", { target: rlState.aim });
   });
-  $("rl-again").addEventListener("click", () => socket.emit("roulette_reset", {}));
+  on("rl-again", "click", () => socket.emit("roulette_reset", {}));
 
   // ---------- POKER ----------
   let lastPoker = null;
@@ -216,14 +219,14 @@
     });
     log.scrollTop = log.scrollHeight;
   }
-  $("chat-toggle").addEventListener("click", () =>
+  on("chat-toggle", "click", () =>
     $("chat-panel").classList.toggle("collapsed"));
   function sendChat() {
     const inp = $("chat-msg"); const msg = inp.value.trim();
     if (msg) { socket.emit("chat", { msg }); inp.value = ""; }
   }
-  $("chat-send").addEventListener("click", sendChat);
-  $("chat-msg").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+  on("chat-send", "click", sendChat);
+  on("chat-msg", "keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
   // ---------- misc ----------
   function escapeHtml(s) {
@@ -231,10 +234,10 @@
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  // init sub-modules
-  window.Blackjack.bind();
-  window.Poker.bind();
+  // init sub-modules (isolated so one failure can't break the others)
+  try { window.Blackjack.bind(); } catch (e) { console.warn("Blackjack.bind failed", e); }
+  try { window.Poker.bind(); } catch (e) { console.warn("Poker.bind failed", e); }
 
   // enter animation
-  $("joinCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnJoin").click(); });
+  on("joinCode", "keydown", (e) => { if (e.key === "Enter") $("btnJoin").click(); });
 })();

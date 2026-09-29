@@ -38,6 +38,20 @@ HOST = "0.0.0.0"
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "bar76-" + "".join(random.choices(string.ascii_letters, k=16))
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # always revalidate static assets
+
+
+def asset_version():
+    """Cache-busting token derived from newest static/template mtime."""
+    newest = 0.0
+    for root in (os.path.join(BASE_DIR, "static"), os.path.join(BASE_DIR, "templates")):
+        for dirpath, _dirs, files in os.walk(root):
+            for f in files:
+                try:
+                    newest = max(newest, os.path.getmtime(os.path.join(dirpath, f)))
+                except OSError:
+                    pass
+    return str(int(newest))
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 LOCK = threading.RLock()
@@ -145,7 +159,9 @@ def push_poker(room):
 # --------------------------------------------------------------------------
 @app.route("/")
 def index():
-    return render_template("index.html")
+    resp = app.make_response(render_template("index.html", v=asset_version()))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 
 @app.route("/health")

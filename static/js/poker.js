@@ -2,6 +2,7 @@
 (function () {
   const SUIT = { s: "♠", h: "♥", d: "♦", c: "♣" };
   const $ = (id) => document.getElementById(id);
+  const on = (id, evt, fn) => { const el = $(id); if (el) el.addEventListener(evt, fn); };
   let mySid = null;
   let last = null;
 
@@ -161,12 +162,12 @@
   }
 
   function bind() {
-    $("pk-deal").addEventListener("click", () => window.socket.emit("poker_start", {}));
-    $("pk-fold").addEventListener("click", () => act("fold"));
-    $("pk-check").addEventListener("click", () => act("check"));
-    $("pk-call").addEventListener("click", () => act("call"));
-    $("pk-raise").addEventListener("click", () => act("raise", +$("pk-slider").value));
-    $("pk-slider").addEventListener("input", updateRaiseLabel);
+    on("pk-deal", "click", () => window.socket.emit("poker_start", {}));
+    on("pk-fold", "click", () => act("fold"));
+    on("pk-check", "click", () => act("check"));
+    on("pk-call", "click", () => act("call"));
+    on("pk-raise", "click", () => act("raise", +$("pk-slider").value));
+    on("pk-slider", "input", updateRaiseLabel);
   }
 
   function act(action, amount) {

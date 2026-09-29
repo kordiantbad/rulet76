@@ -15,6 +15,7 @@
   };
 
   const $ = (id) => document.getElementById(id);
+  const on = (id, evt, fn) => { const el = $(id); if (el) el.addEventListener(evt, fn); };
 
   function loadBank() {
     const v = parseInt(localStorage.getItem("bar76_bj_bank") || "1000", 10);
@@ -178,11 +179,11 @@
   function bind() {
     document.querySelectorAll("#bj-bet-panel .chip").forEach((b) =>
       b.addEventListener("click", () => addChip(parseInt(b.dataset.chip, 10))));
-    $("bj-clear").addEventListener("click", clearBet);
-    $("bj-deal").addEventListener("click", deal);
-    $("bj-hit").addEventListener("click", hit);
-    $("bj-stand").addEventListener("click", stand);
-    $("bj-double").addEventListener("click", double);
+    on("bj-clear", "click", clearBet);
+    on("bj-deal", "click", deal);
+    on("bj-hit", "click", hit);
+    on("bj-stand", "click", stand);
+    on("bj-double", "click", double);
   }
 
   window.Blackjack = { bind, reset };

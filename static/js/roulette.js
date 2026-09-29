@@ -291,10 +291,10 @@ function buildBar() {
   barTop.position.set(-9.6, 1.6, 0); bar.add(barTop);
   const barTop2 = barTop.clone(); barTop2.position.x = 9.6; barTop2.material = barTop.material.clone(); barTop2.material.emissive = new THREE.Color(0xff3b6b); bar.add(barTop2);
 
-  // the round game table
-  const felt = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.12, 64), new THREE.MeshStandardMaterial({ color: 0x0b4a33, roughness: 0.75, metalness: 0.04 }));
+  // the round game table — deep, near-black felt
+  const felt = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.12, 64), new THREE.MeshStandardMaterial({ color: 0x04140d, roughness: 0.95, metalness: 0.02 }));
   felt.position.set(0, 0.94, 0); felt.castShadow = felt.receiveShadow = true; bar.add(felt);
-  const rail = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.06, 16, 64), new THREE.MeshStandardMaterial({ color: 0x2f180d, roughness: 0.4, metalness: 0.35 }));
+  const rail = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.06, 16, 64), new THREE.MeshStandardMaterial({ color: 0x241009, roughness: 0.5, metalness: 0.3 }));
   rail.rotation.x = Math.PI / 2; rail.position.set(0, 1.0, 0); bar.add(rail);
   const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.3, 0.9, 24), new THREE.MeshStandardMaterial({ color: 0x180b05, roughness: 0.6, metalness: 0.2 }));
   ped.position.set(0, 0.45, 0); ped.castShadow = true; bar.add(ped);
@@ -383,7 +383,7 @@ function init(canvas) {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.92;
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x050403);
@@ -401,8 +401,8 @@ function init(canvas) {
   controls.minDistance = 1.6; controls.maxDistance = 6.5;
   controls.maxPolarAngle = Math.PI / 2.02; controls.minPolarAngle = 0.25;
 
-  scene.add(new THREE.AmbientLight(0x241a12, 0.35));
-  const key = new THREE.SpotLight(0xffb066, 90, 14, 0.62, 0.55, 1.3);
+  scene.add(new THREE.AmbientLight(0x201811, 0.28));
+  const key = new THREE.SpotLight(0xffb066, 75, 14, 0.62, 0.55, 1.3);
   key.position.set(0, 3.35, 0); key.target.position.copy(CENTER);
   key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004;
   scene.add(key, key.target);
