@@ -117,7 +117,11 @@ body.rl-aiming #rl-canvas{cursor:none}
 #rl-crosshair{position:fixed;z-index:6;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;
   border:1px solid rgba(229,72,77,.7);border-radius:50%;display:none}
 #rl-crosshair::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--accent)}
-body.rl-aiming #rl-crosshair{display:block}
+body.rl-aiming #rl-crosshair,body.rl-locked #rl-crosshair{display:block}
+/* when the pointer is locked you aim with your head, so pin the crosshair to centre */
+body.rl-locked #rl-crosshair{left:50% !important;top:50% !important}
+body.rl-locked:not(.rl-aiming) #rl-crosshair{border-color:rgba(255,255,255,.5)}
+body.rl-locked:not(.rl-aiming) #rl-crosshair::after{background:rgba(255,255,255,.6)}
 
 .hud-left{position:absolute;left:14px;top:64px;display:flex;flex-direction:column;gap:6px;max-width:190px;pointer-events:none}
 .pl-chip{background:rgba(10,10,12,.6);border:1px solid var(--line);border-radius:8px;

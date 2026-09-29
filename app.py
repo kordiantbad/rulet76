@@ -369,6 +369,28 @@ def roulette_aim(data):
     socketio.emit("roulette_fx", {"type": "aim", "shooter": request.sid, "target": target}, to=room.code)
 
 
+@socketio.on("roulette_look")
+def roulette_look(data):
+    # Relay a player's head/aim direction to everyone else in the room so their
+    # stick figure can turn its head and swing its arm toward whom they target.
+    with LOCK:
+        room = room_of(request.sid)
+        if not room or room.game != "roulette":
+            return
+        code = room.code
+    try:
+        yaw = float(data.get("yaw", 0.0))
+        pitch = float(data.get("pitch", 0.0))
+    except (TypeError, ValueError):
+        return
+    yaw = max(-1.25, min(1.25, yaw))
+    pitch = max(-1.4, min(1.5, pitch))
+    target = data.get("target")
+    socketio.emit("roulette_fx",
+                  {"type": "look", "sid": request.sid, "yaw": yaw, "pitch": pitch, "target": target},
+                  to=code, include_self=False)
+
+
 @socketio.on("roulette_shoot")
 def roulette_shoot(data):
     with LOCK:

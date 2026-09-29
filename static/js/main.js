@@ -185,8 +185,8 @@
       ? (st.order.find((p) => p.sid === st.aim) || {}).name : null;
     const hint = $("rl-hint");
     if (hint) hint.innerHTML = aimName
-      ? `Target: <b>${escapeHtml(aimName)}</b> — click to fire`
-      : "Move the mouse to aim · click to fire";
+      ? `Target: <b>${escapeHtml(aimName)}</b> — click to fire · S for yourself`
+      : "Click the table to look around · aim your head · click to fire";
   }
   // called by the 3D layer when the snapped target changes
   window.RL_onTarget = () => updateAimHint(rlState);
