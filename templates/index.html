@@ -90,8 +90,11 @@
           <button class="action-btn primary" id="rl-start">Load &amp; Start</button>
         </div>
         <div id="rl-controls" class="rl-controls hidden">
-          <button class="action-btn" id="rl-spin">🌀 Spin Cylinder</button>
-          <button class="action-btn danger" id="rl-pull">☠ Pull Trigger</button>
+          <div class="rl-hint" id="rl-hint">Your turn — aim at a rival or test your own luck</div>
+          <div class="rl-btn-row">
+            <button class="action-btn" id="rl-self">🎯 Shoot Yourself</button>
+            <button class="action-btn danger hidden" id="rl-fire">🔫 Fire!</button>
+          </div>
         </div>
         <div id="rl-over" class="rl-over hidden">
           <div id="rl-winner">Winner</div>

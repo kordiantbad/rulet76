@@ -78,29 +78,28 @@ class Room:
 # ---- roulette state ------------------------------------------------------
 class Roulette:
     def __init__(self):
-        self.order = []           # list of sids (seating)
+        self.order = []           # seating order (sids)
         self.alive = {}           # sid -> bool
         self.chambers = 6
-        self.bullet_pos = None    # index in cylinder that holds the bullet
+        self.bullets = 1
+        self.bullet_set = set()   # chamber indices that are live
         self.position = 0         # current chamber pointer
-        self.turn = None          # sid whose turn it is
-        self.state = "lobby"      # lobby, ready, spinning, playing, over
-        self.spun = False
+        self.turn = None          # sid holding the gun
+        self.aim = None           # sid currently being aimed at
+        self.state = "lobby"      # lobby, playing, over
         self.winner = None
         self.last_action = None
-        self.round_no = 0
 
     def public(self, names):
         return {
             "order": [{"sid": s, "name": names.get(s, "?"), "alive": self.alive.get(s, False)} for s in self.order],
             "chambers": self.chambers,
-            "position": self.position,
+            "bullets": self.bullets,
             "turn": self.turn,
+            "aim": self.aim,
             "state": self.state,
-            "spun": self.spun,
             "winner": self.winner,
             "last_action": self.last_action,
-            "round_no": self.round_no,
         }
 
 
@@ -194,13 +193,14 @@ def _leave(sid):
     if room.game == "roulette" and room.r:
         r = room.r
         if sid in r.order:
-            if r.state in ("playing", "spinning") and r.alive.get(sid):
+            was_turn = r.turn == sid
+            if r.state == "playing" and r.alive.get(sid):
                 r.alive[sid] = False
-                if r.turn == sid:
-                    _roulette_next_turn(room)
-                _check_roulette_winner(room)
             r.order = [s for s in r.order if s in room.members]
             r.alive = {s: r.alive.get(s, True) for s in r.order}
+            if r.state == "playing" and not _check_roulette_winner(room):
+                if was_turn or r.turn not in r.order:
+                    _roulette_pass_turn(room, sid)
         push_roulette(room)
 
     # poker cleanup
@@ -219,9 +219,13 @@ def on_create(data):
     game = data.get("game", "roulette")
     if game not in ("roulette", "poker"):
         game = "roulette"
+    want = (data.get("code") or "").strip().upper()
     with LOCK:
         _leave(request.sid)
-        code = gen_code()
+        if want and len(want) == 4 and want not in ROOMS:
+            code = want
+        else:
+            code = gen_code()
         room = Room(code, game, request.sid)
         room.members[request.sid] = Member(request.sid, name)
         if game == "roulette":
@@ -292,6 +296,12 @@ def on_chat(data):
 # --------------------------------------------------------------------------
 # socket: ROULETTE
 # --------------------------------------------------------------------------
+def _roulette_reload(r):
+    """Fresh cylinder: new random live rounds, pointer at the top."""
+    r.bullet_set = set(random.sample(range(r.chambers), min(r.bullets, r.chambers)))
+    r.position = 0
+
+
 @socketio.on("roulette_start")
 def roulette_start(data):
     with LOCK:
@@ -305,122 +315,105 @@ def roulette_start(data):
             emit("error_msg", {"msg": "Need at least 2 players."})
             return
         r = room.r
-        chambers = int(data.get("chambers", 6))
-        bullets = int(data.get("bullets", 1))
-        chambers = max(2, min(8, chambers))
-        bullets = max(1, min(chambers - 1, bullets))
+        chambers = max(2, min(8, int(data.get("chambers", 6))))
+        bullets = max(1, min(chambers - 1, int(data.get("bullets", 1))))
         r.chambers = chambers
         r.bullets = bullets
         r.order = list(room.members.keys())
         random.shuffle(r.order)
         r.alive = {s: True for s in r.order}
-        r.turn = r.order[0]
-        r.state = "ready"
-        r.spun = False
+        r.state = "playing"
         r.winner = None
-        r.round_no = 1
+        r.aim = None
         r.last_action = None
-        _roulette_load(r)
-        room.chat.append({"sys": True, "msg": f"Round 1 — {chambers} chambers, {bullets} live"})
+        _roulette_reload(r)
+        first = random.choice(r.order)
+        r.turn = first
+        room.chat.append({"sys": True, "msg": f"Round on — {chambers} chambers, {bullets} live"})
     push_room(room)
     push_roulette(room)
+    socketio.emit("roulette_fx", {"type": "handoff", "from": None, "to": first}, to=room.code)
 
 
-def _roulette_load(r):
-    r.bullet_set = set(random.sample(range(r.chambers), getattr(r, "bullets", 1)))
-    r.position = 0
-    r.spun = False
-
-
-@socketio.on("roulette_spin")
-def roulette_spin(data):
+@socketio.on("roulette_aim")
+def roulette_aim(data):
     with LOCK:
         room = room_of(request.sid)
         if not room or room.game != "roulette":
             return
         r = room.r
-        if r.state not in ("ready", "playing"):
+        if r.state != "playing" or r.turn != request.sid:
             return
-        if r.turn != request.sid:
-            emit("error_msg", {"msg": "Not your turn."})
+        target = data.get("target")
+        if target not in r.alive or not r.alive.get(target):
             return
-        r.bullet_set = set(random.sample(range(r.chambers), getattr(r, "bullets", 1)))
-        r.position = random.randrange(r.chambers)
-        r.spun = True
-        r.state = "playing"
-        r.last_action = {"type": "spin", "sid": request.sid}
-        name = room.members[request.sid].name
-        room.chat.append({"sys": True, "msg": f"{name} spins the cylinder"})
+        r.aim = target
     push_roulette(room)
-    socketio.emit("roulette_fx", {"type": "spin", "sid": request.sid}, to=room.code)
-    push_room(room)
+    socketio.emit("roulette_fx", {"type": "aim", "shooter": request.sid, "target": target}, to=room.code)
 
 
-@socketio.on("roulette_pull")
-def roulette_pull(data):
+@socketio.on("roulette_shoot")
+def roulette_shoot(data):
     with LOCK:
         room = room_of(request.sid)
         if not room or room.game != "roulette":
             return
         r = room.r
-        if r.state not in ("ready", "playing"):
-            return
-        if r.turn != request.sid:
+        if r.state != "playing" or r.turn != request.sid:
             emit("error_msg", {"msg": "Not your turn."})
             return
-        r.state = "playing"
-        fired = r.position in getattr(r, "bullet_set", set())
-        name = room.members[request.sid].name
-        chamber = r.position
+        sid = request.sid
+        target = data.get("target") or r.aim or sid
+        if target not in r.alive or not r.alive.get(target):
+            emit("error_msg", {"msg": "Pick a living target."})
+            return
+        r.aim = target
+
+        fired = r.position in r.bullet_set
         r.position = (r.position + 1) % r.chambers
-        r.spun = False
+        self_shot = target == sid
+        sname = room.members[sid].name if sid in room.members else "?"
+        tname = room.members[target].name if target in room.members else "?"
+
+        socketio.emit("roulette_fx",
+                      {"type": "bang" if fired else "click",
+                       "shooter": sid, "target": target, "self": self_shot},
+                      to=room.code)
 
         if fired:
-            r.alive[request.sid] = False
-            r.last_action = {"type": "bang", "sid": request.sid, "chamber": chamber}
-            room.chat.append({"sys": True, "msg": f"💥 BANG! {name} is out."})
-            socketio.emit("roulette_fx", {"type": "bang", "sid": request.sid}, to=room.code)
-            over = _check_roulette_winner(room)
-            if not over:
-                _roulette_next_turn(room)
-                # reload for the next victim
-                r.bullet_set = set(random.sample(range(r.chambers), getattr(r, "bullets", 1)))
-                r.position = 0
-                r.round_no += 1
+            r.alive[target] = False
+            r.last_action = {"type": "bang", "shooter": sid, "target": target}
+            if self_shot:
+                room.chat.append({"sys": True, "msg": f"💥 {sname} took their own life. Out."})
+            else:
+                room.chat.append({"sys": True, "msg": f"💥 {sname} shot {tname} dead."})
+            if not _check_roulette_winner(room):
+                _roulette_pass_turn(room, sid)
         else:
-            r.last_action = {"type": "click", "sid": request.sid, "chamber": chamber}
-            room.chat.append({"sys": True, "msg": f"*click* — {name} survives."})
-            socketio.emit("roulette_fx", {"type": "click", "sid": request.sid}, to=room.code)
-            _roulette_next_turn(room)
+            r.last_action = {"type": "click", "shooter": sid, "target": target}
+            if self_shot:
+                room.chat.append({"sys": True, "msg": f"*click* — {sname} survives and goes again."})
+                r.aim = None  # keep the turn, keep the cylinder rolling
+            else:
+                room.chat.append({"sys": True, "msg": f"*click* — {sname} missed {tname}."})
+                _roulette_pass_turn(room, sid)
     push_roulette(room)
     push_room(room)
 
 
-def _roulette_next_turn(room):
+def _roulette_pass_turn(room, prev):
+    """Put the gun down; spin to a new shooter (never the one who put it down)."""
     r = room.r
-    alive_order = [s for s in r.order if r.alive.get(s)]
-    if not alive_order:
+    alive = [s for s in r.order if r.alive.get(s)]
+    if len(alive) <= 1:
+        _check_roulette_winner(room)
         return
-    if r.turn not in alive_order:
-        # pick next after current position in order
-        try:
-            idx = r.order.index(r.turn)
-        except ValueError:
-            idx = -1
-        nxt = None
-        for step in range(1, len(r.order) + 1):
-            cand = r.order[(idx + step) % len(r.order)]
-            if r.alive.get(cand):
-                nxt = cand
-                break
-        r.turn = nxt or alive_order[0]
-    else:
-        idx = r.order.index(r.turn)
-        for step in range(1, len(r.order) + 1):
-            cand = r.order[(idx + step) % len(r.order)]
-            if r.alive.get(cand):
-                r.turn = cand
-                break
+    candidates = [s for s in alive if s != prev] or alive
+    nxt = random.choice(candidates)
+    r.turn = nxt
+    r.aim = None
+    _roulette_reload(r)
+    socketio.emit("roulette_fx", {"type": "handoff", "from": prev, "to": nxt}, to=room.code)
 
 
 def _check_roulette_winner(room):
@@ -429,6 +422,8 @@ def _check_roulette_winner(room):
     if len(alive_order) <= 1:
         r.state = "over"
         r.winner = alive_order[0] if alive_order else None
+        r.turn = None
+        r.aim = None
         wname = room.members[r.winner].name if r.winner in room.members else "Nobody"
         room.chat.append({"sys": True, "msg": f"🏆 {wname} is the last one standing!"})
         socketio.emit("roulette_fx", {"type": "win", "sid": r.winner}, to=room.code)

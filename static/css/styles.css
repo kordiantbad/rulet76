@@ -156,7 +156,14 @@ body{
 .setup-row label{display:flex;flex-direction:column;font-size:12px;letter-spacing:1px;color:var(--muted);gap:5px;align-items:center}
 .setup-row input{width:64px;text-align:center;font-family:'Special Elite';font-size:20px;
   background:var(--card-bg);border:1px solid rgba(233,196,106,.3);color:var(--gold);border-radius:8px;padding:6px}
-.rl-controls{display:flex;gap:16px}
+.rl-controls{display:flex;flex-direction:column;gap:10px;align-items:center;background:var(--glass);
+  padding:14px 22px;border-radius:14px;border:1px solid rgba(233,196,106,.25)}
+.rl-btn-row{display:flex;gap:16px}
+.rl-hint{color:var(--gold);letter-spacing:1px;font-weight:300;font-size:14px;text-align:center}
+.pl-chip.aimable{cursor:pointer}
+.pl-chip.aimable:hover{border-color:var(--danger);box-shadow:0 0 14px rgba(226,64,74,.45)}
+.pl-chip.aimed{border-color:var(--danger);box-shadow:0 0 18px rgba(226,64,74,.7)}
+.pl-chip .target-x{color:var(--danger);font-weight:700}
 .rl-over{display:flex;flex-direction:column;gap:12px;align-items:center;background:var(--glass);
   padding:18px 30px;border-radius:14px;border:1px solid var(--amber)}
 #rl-winner{font-family:'Cinzel';font-size:26px;color:var(--gold);text-shadow:0 0 20px rgba(233,196,106,.6)}
